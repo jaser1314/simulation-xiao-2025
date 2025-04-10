@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>舒张压监护仪</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+        #result {
+            margin-top: 20px;
+            font-size: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <button id="generate">Generate Simulation</button><br>
+    <canvas id="ecgCanvas" width="864" height="400"></canvas>
+    <div id="result"></div>
+
+    <script>
+        function generateData() {
+            let data = [];
+            for (let i = 0; i < 432; i++) {
+                let rand = Math.random();
+                let value;
+                if (rand < 0.05) {
+                    value = Math.random() * 10 + 5;    // 5%: 10-20
+                } else if (rand < 0.15) {
+                    value = Math.random() * 10 + 15;    // 20%: 20-30
+                } else if (rand < 0.55) {
+                    value = Math.random() * 20 + 25;    // 40%: 30-50
+                } else if (rand < 0.75) {
+                    value = Math.random() * 10 + 65;    // 30%: 50-60
+                } else {
+                    value = Math.random() * 30 + 75;    // 5%: 60-90
+                }
+                data.push(value);
+            }
+            return data;
+        }
+
+        // t_i：表示计算的时长（单位：小时）
+        function calculateTimeWeightedAverage(data, t_i) {
+            if (t_i === 0) return data[0];
+            
+            let sumArea = 0;
+            const totalTime = t_i; // 小时
+            // 每个数据代表10分钟，即 10/60 小时
+            const dt = 10 / 60;
+            // 计算完整数据点的数量
+            let count = Math.floor(t_i / dt);
+            if (count >= data.length) count = data.length - 1;
+            for (let j = 0; j < count; j++) {
+                const value1 = data[j];
+                const value2 = data[j + 1];
+                sumArea += (value1 + value2) / 2 * dt;
+            }
+            // 处理最后不足一个时间步长的部分
+            const remainingTime = t_i - count * dt;
+            if (remainingTime > 0 && count < data.length) {
+                sumArea += data[count] * remainingTime;
+            }
+            return sumArea / totalTime;
+        }
+
+        function calculateD(data) {
+            let D = [];
+            for (let i = 0; i < 19; i++) {
+                D.push(calculateTimeWeightedAverage(data, i * 4));
+            }
+            return D;
+        }
+
+        // 绘制图表，同时增加横纵坐标轴及刻度
+        function drawCanvas(originalData, D) {
+            const canvas = document.getElementById('ecgCanvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 定义边距
+            const marginLeft = 50;
+            const marginRight = 20;
+            const marginTop = 20;
+            const marginBottom = 50;
+            const drawingWidth = canvas.width - marginLeft - marginRight;
+            const drawingHeight = canvas.height - marginTop - marginBottom;
+
+            // 绘制坐标轴
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 1;
+            // x轴：从左下角到右下角
+            ctx.beginPath();
+            ctx.moveTo(marginLeft, canvas.height - marginBottom);
+            ctx.lineTo(canvas.width - marginRight, canvas.height - marginBottom);
+            ctx.stroke();
+            // y轴：从左上角到底部
+            ctx.beginPath();
+            ctx.moveTo(marginLeft, marginTop);
+            ctx.lineTo(marginLeft, canvas.height - marginBottom);
+            ctx.stroke();
+
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            const totalHours = 72;
+            const xScale = drawingWidth / totalHours;  // 72小时映射到绘图区宽度
+            for (let t = 0; t <= totalHours; t += 6) {
+                const x = marginLeft + t * xScale;
+                const yStart = canvas.height - marginBottom;
+                const yEnd = yStart + 5;
+                ctx.beginPath();
+                ctx.moveTo(x, yStart);
+                ctx.lineTo(x, yEnd);
+                ctx.stroke();
+                ctx.fillText(t + 'h', x, yEnd + 2);
+            }
+
+            // 绘制 y轴刻度和标签（每10 mmHg从10到90）
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            for (let val = 10; val <= 90; val += 10) {
+                // 将舒张压值映射到绘图区域，值越大显示越高
+                const y = marginTop + (90 - val) / 80 * drawingHeight;
+                const xStart = marginLeft;
+                const xEnd = xStart - 5;
+                ctx.beginPath();
+                ctx.moveTo(xStart, y);
+                ctx.lineTo(xEnd, y);
+                ctx.stroke();
+                ctx.fillText(val, xEnd - 2, y);
+            }
+
+            // 绘制红色折线图（原始数据）
+            ctx.beginPath();
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 1;
+            const xScaleRed = drawingWidth / (432 - 1);
+            for (let i = 0; i < originalData.length; i++) {
+                const x = marginLeft + i * xScaleRed;
+                const y = marginTop + (90 - originalData[i]) / 80 * drawingHeight;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // 绘制蓝色折线图（D数组）
+            ctx.beginPath();
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < D.length; i++) {
+                const t = i * 4;  // 小时
+                const x = marginLeft + t * xScale;
+                const y = marginTop + (90 - D[i]) / 80 * drawingHeight;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+
+        // 计算欧式距离
+        function calculateEuclideanDistance(D, centroid) {
+            let sum = 0;
+            for (let i = 0; i < D.length; i++) {
+                sum += Math.pow(D[i] - centroid[i], 2);
+            }
+            return Math.sqrt(sum);
+        }
+
+        document.getElementById('generate').addEventListener('click', () => {
+            const data = generateData();
+            const D = calculateD(data);
+            drawCanvas(data, D);
+
+            const centroids = {
+                α: [60.13,61.37,59.52,58.36,58.07,58,57.82,57.95,57.92,58.11,58.39,58.5,58.58,58.8,59.06,59.35,59.97,60.21,60.55],
+                β: [60.27,53.87,51.47,50.07,49.55,49.19,48.95,48.7,48.75,48.83,48.95,49.18,49.7,49.72,50.05,50,50.5,50.79,51.48],
+                γ: [59.95,67.43,66.18,65.67,65.69,65.91,66.51,66.93,67.47,68.5,68.94,69.9,70.11,71.34,71.14,71.49,71.97,72,71.83]
+            };
+
+            let minDist = Infinity;
+            let closest = '';
+            for (const [key, values] of Object.entries(centroids)) {
+                const dist = calculateEuclideanDistance(D, values);
+                if (dist < minDist) {
+                    minDist = dist;
+                    closest = key;
+                }
+            }
+
+            document.getElementById('result').textContent = `This group of diastolic blood pressure is most similar to phenotype ${closest} `;
+        });
+    </script>
+</body>
+</html>
